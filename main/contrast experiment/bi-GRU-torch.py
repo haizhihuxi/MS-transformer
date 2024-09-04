@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from haversine import haversine, Unit
 from tqdm import tqdm
 
-reset = False
+reset = True
 
 # Load the provided data files
 test_data_path = '../data/test_filter.pkl'

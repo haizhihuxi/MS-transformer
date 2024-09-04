@@ -16,6 +16,9 @@ random.seed(42)
 torch.manual_seed(42)
 
 class CausalSelfAttention(nn.Module):
+    """
+    Original transformer block
+    """
 
     def __init__(self, config):
         super().__init__()
@@ -67,6 +70,9 @@ class CausalSelfAttention(nn.Module):
         return y
 
 class CausalSelfAttention_sim_weight(nn.Module):
+    """
+    Calculating similarity in self attention blocks incurs significant time costs
+    """
 
     def __init__(self, config, embedding, attention, fc_judge, fc_info, out_judge, out_info):
         super().__init__()
@@ -268,12 +274,6 @@ class CausalSelfAttention_sim_weight(nn.Module):
         k = self.value(x)
         v = self.value(x)
         if state:
-            # #  data 是包含所有轨迹的列表
-            # traj_arrays = [np.array(all_data[idx]["traj"][:, [0, 1]], dtype=np.float32) for idx in range(len(all_data))]
-            # selected_trajectories = self.select_trajectories_for_comparison(real_x, traj_arrays,
-            #                                                                 Config.traj_compary_threshold)
-            # print(f"the number of compared trajectory：{len(selected_trajectories)}")  # 每条轨迹不一样长
-            # 记录程序开始的时刻
             start_time = time.time()
             # print(f"开始计算相似度: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}")
             weighted_sum = torch.zeros(len(real_x), real_x.shape[1] // 5).to("cuda:0")
@@ -437,6 +437,10 @@ class similarity_Attention(nn.Module):
 
 class CausalSelfAttention_adaptive_weight(nn.Module):
 
+    """
+    Calculate parameters and adjust the similarity dimension in Frechet distance, applied in SSA module
+    """
+
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
@@ -484,7 +488,7 @@ class CausalSelfAttention_adaptive_weight(nn.Module):
                             if start_col + n < seqlen:
                                 weights_ori[i][start_col + n] = weights[i][j]
 
-                weights_ori = np.array(weights_ori, dtype=np.float32)  # 使用np.float32确保类型兼容
+                weights_ori = np.array(weights_ori, dtype=np.float32)
                 weights_ori = torch.from_numpy(weights_ori).to('cuda:0')
                 # 调整形状为(B, 1, 1, T)以便广播
 
@@ -526,9 +530,9 @@ class CausalSelfAttention_adaptive_weight(nn.Module):
         scale_factor = 1.0 / math.sqrt(k.size(-1))
         att = att * scale_factor
 
-        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))  # mask无关位置,mask中为0的位置用浮点数‘-inf’填充
-        att = F.softmax(att, dim=-1)  # softmax(32,8,120,120)
-        att = self.attn_drop(att)  # dropout 非0参数除以0.9，放大
+        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_drop(att)
         att = att.float()
         y = att @ v
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -539,23 +543,27 @@ class CausalSelfAttention_adaptive_weight(nn.Module):
 
 class CausalSelfAttention_newsim_weight(nn.Module):
 
+    """
+    Multi window similarity, pre embedded with similarity information calculated by the SEA module, directly used in the SSA module for similarity information
+    """
+
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads
         self.key = nn.Linear(config.n_embd, config.n_embd)
-        self.query = nn.Linear(config.n_embd, config.n_embd)  # 线性层768*768
+        self.query = nn.Linear(config.n_embd, config.n_embd)
         self.value = nn.Linear(config.n_embd, config.n_embd)
-        self.weights_layer = nn.Linear(config.max_seqlen, config.max_seqlen, bias=False)  # 添加用于学习权重的全连接层
+        self.weights_layer = nn.Linear(config.max_seqlen, config.max_seqlen, bias=False)
         # regularization
         self.attn_drop = nn.Dropout(config.attn_pdrop)
-        self.resid_drop = nn.Dropout(config.resid_pdrop)  # dropout 神经元
+        self.resid_drop = nn.Dropout(config.resid_pdrop)
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.weight_concat = nn.Linear(config.max_seqlen, config.max_seqlen)
         self.register_buffer("mask", torch.tril(torch.ones(config.max_seqlen, config.max_seqlen))
                              .view(1, 1, config.max_seqlen, config.max_seqlen))
-        self.n_head = config.n_head  # 头的数目8
+        self.n_head = config.n_head
         self.compary_threshold = config.traj_compary_threshold
         self.register_buffer("input_mask",
                              torch.cat([torch.ones(config.n_embd - config.n_auxil), torch.zeros(config.n_auxil)]))
@@ -604,21 +612,20 @@ class CausalSelfAttention_newsim_weight(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-        # 计算点积
         att = q @ k.transpose(-2, -1)
         all_ones = (weight_line == 1).all().item()
         if all_ones:
             weight_line = torch.ones_like(att)
         att = att * weight_line
         scale_factor = 1.0 / math.sqrt(k.size(-1))
-        att = att * scale_factor  # q(32,8,120,96)与k转置(32,8,96,120)矩阵乘法得(32,8,120,120)
-        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))  # mask无关位置,mask中为0的位置用浮点数‘-inf’填充
-        att = F.softmax(att, dim=-1)  # softmax(32,8,120,120)
-        att = self.attn_drop(att)  # dropout 非0参数除以0.9，放大
+        att = att * scale_factor
+        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_drop(att)
         att = att.float()
-        y = att @ v  # (B32, nh8, T120, T120) x (B32, nh8, T120, hs96) -> (B32, nh8, T120, hs96) #*V
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-        y = self.resid_drop(self.proj(y))  # 先通过线形层再drop
+        y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.resid_drop(self.proj(y))
         return y
 
 

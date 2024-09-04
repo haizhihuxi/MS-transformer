@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-from config import Config
+from config_SEA import Config
 import math
 import matplotlib.pyplot as plt
 import os
@@ -259,19 +259,19 @@ class TrajectoryMatchingNetwork(nn.Module):
     def forward(self, traj_1, traj_2, count, index_1, index_2, masks=None):
 
         # 使用信息窗口大小进行计算
-        sim_scores_5, true_scores_5 = self.compute_similarity(traj_1, traj_2, self.window_size_5, self.fc_5,
+        sim_scores_5, true_scores_5 = self.compute_similarity_erp(traj_1, traj_2, self.window_size_5, self.fc_5,
                                                               self.out_5, count, index_1, index_2, masks)
 
         # 使用判断窗口大小进行计算
-        sim_scores_10, true_scores_10 = self.compute_similarity(traj_1, traj_2, self.window_size_10,
+        sim_scores_10, true_scores_10 = self.compute_similarity_erp(traj_1, traj_2, self.window_size_10,
                                                                 self.fc_10, self.out_10, count, index_1, index_2,
                                                                 masks)
         # 使用判断窗口大小进行计算
-        sim_scores_15, true_scores_15 = self.compute_similarity(traj_1, traj_2, self.window_size_15,
+        sim_scores_15, true_scores_15 = self.compute_similarity_erp(traj_1, traj_2, self.window_size_15,
                                                                 self.fc_15, self.out_15, count, index_1, index_2,
                                                                 masks)
         # 使用判断窗口大小进行计算
-        sim_scores_20, true_scores_20 = self.compute_similarity(traj_1, traj_2, self.window_size_20,
+        sim_scores_20, true_scores_20 = self.compute_similarity_dtw(traj_1, traj_2, self.window_size_20,
                                                                 self.fc_20, self.out_20, count, index_1, index_2,
                                                                 masks)
 
@@ -286,7 +286,7 @@ class TrajectoryMatchingNetwork(nn.Module):
 
         return total_loss, sim_scores_5, true_scores_5, sim_scores_10, true_scores_10, sim_scores_15, true_scores_15, sim_scores_20, true_scores_20
 
-    def compute_similarity(self, traj_1, traj_2, WindowSize, fc_layer, output_layer, count, index_1, index_2, masks):
+    def compute_similarity_erp(self, traj_1, traj_2, WindowSize, fc_layer, output_layer, count, index_1, index_2, masks):
         num_windows = traj_1.size(0) // WindowSize
         true_scores = []
         sim_scores = []
@@ -322,27 +322,59 @@ class TrajectoryMatchingNetwork(nn.Module):
             sim_score = output_layer(features)
             sim_scores.append(sim_score)
 
-            # 假设计算弗雷歇距离的函数为frechet_distance
-            if self.frechet:
-                true_score = frechet_distance(segment_a[combined_mask], segment_b[combined_mask])
-                true_score = true_score.clone().detach().view(-1)  # 使用 clone().detach() 替代 torch.tensor()
-                true_scores.append(true_score)
-            if self.dtw:
-                true_score = dtw_distance(segment_a[combined_mask], segment_b[combined_mask])
-                true_score = true_score.clone().detach().view(-1)
-                true_scores.append(true_score)
-            if self.cos:
-                true_score = cosine_similarity(segment_a[combined_mask], segment_b[combined_mask])
-                true_score = true_score.clone().detach().view(-1)
-                true_scores.append(true_score)
             if self.erp:
                 true_score = erp_distance(segment_a[combined_mask], segment_b[combined_mask])
                 true_score = true_score.clone().detach().view(-1)
                 true_scores.append(true_score)
-            if self.hausdorff:
-                true_score = hausdorff_distance(segment_a[combined_mask], segment_b[combined_mask])
+
+        sim_scores = torch.cat(sim_scores) if sim_scores else torch.tensor([], dtype=torch.float32)
+        true_scores = torch.cat(true_scores)
+        if Config.sim_train_plot_result:
+            self.plot_trajectories(traj_1, traj_2, sim_scores, Config.savedir, count, index_1, index_2)
+
+        return sim_scores, true_scores
+
+    def compute_similarity_dtw(self, traj_1, traj_2, WindowSize, fc_layer, output_layer, count, index_1, index_2, masks):
+        num_windows = traj_1.size(0) // WindowSize
+        true_scores = []
+        sim_scores = []
+
+        for i in range(num_windows):
+            start_idx = i * WindowSize
+            end_idx = start_idx + WindowSize
+
+            segment_a = traj_1[start_idx:end_idx, :]
+            segment_b = traj_2[start_idx:end_idx, :]
+
+            # 获取有效部分的mask
+            mask_a = masks[index_1][start_idx:end_idx]
+            mask_b = masks[index_2][start_idx:end_idx]
+            combined_mask = mask_a.bool() & mask_b.bool()
+
+            if combined_mask.sum().item() == 0:
+                continue  # 跳过无有效部分的段
+
+            # 将轨迹坐标转换为嵌入向量
+            embed_a = F.leaky_relu(self.embedding(segment_a))
+            embed_b = F.leaky_relu(self.embedding(segment_b))
+
+            # 计算匹配得分，只要注意力得分
+            _, attn_output_a = self.attention(embed_a, embed_b, embed_b)
+            _, attn_output_b = self.attention(embed_b, embed_a, embed_a)
+
+            # 全连接层进行特征提取
+            feature = torch.cat((attn_output_a, attn_output_b), dim=-1)
+            features = fc_layer(feature).view(-1)
+
+            # 计算相似度
+            sim_score = output_layer(features)
+            sim_scores.append(sim_score)
+
+            if self.dtw:
+                true_score = dtw_distance(segment_a[combined_mask], segment_b[combined_mask])
                 true_score = true_score.clone().detach().view(-1)
                 true_scores.append(true_score)
+
 
         sim_scores = torch.cat(sim_scores) if sim_scores else torch.tensor([], dtype=torch.float32)
         true_scores = torch.cat(true_scores)

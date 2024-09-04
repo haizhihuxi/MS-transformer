@@ -9,7 +9,7 @@ from haversine import haversine, Unit
 import pandas as pd
 from sklearn.metrics import mean_squared_error
 
-reset = False
+reset = True
 
 # Load the provided data files
 test_data_path = '../data/test_filter.pkl'

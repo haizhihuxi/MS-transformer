@@ -1,10 +1,8 @@
 
 import math
 import logging
-
 from tqdm import tqdm
 import numpy as np
-
 import torch
 from torch.utils.data.dataloader import DataLoader
 import torch.optim as optim

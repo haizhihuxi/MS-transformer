@@ -8,17 +8,17 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-import datasets
+import datasets_SEA
 import similarity_models
 import similarity_train
-import utils
-from config import Config
+import utils_SEA
+from config_SEA import Config
 
 cf = Config()
 logger = logging.getLogger(__name__)
 
 # make deterministic 统一
-utils.set_seed(42)
+utils_SEA.set_seed(42)
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
 if __name__ == "__main__":
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         print('======= Create directory to store trained models: ' + cf.savedir)
     else:
         print('======= Directory to store trained models: ' + cf.savedir)
-    utils.new_log(cf.savedir, "log")
+    utils_SEA.new_log(cf.savedir, "log")
 
     ## Data
     # ===============================
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         print(len(l_pred_errors), len(Data[phase]))
         print(f"Length: {len(Data[phase])}")
         print("Creating pytorch dataset...")
-        aisdatasets[phase] = datasets.AISDataset_sim(Data[phase],
+        aisdatasets[phase] = datasets_SEA.AISDataset_sim(Data[phase],
                                                      max_seqlen=cf.max_seqlen + 1,
                                                      device=cf.device)
         if phase == "test":
@@ -110,19 +110,19 @@ if __name__ == "__main__":
                         loss, sim_scores_w_5, true_scores_w_5, sim_scores_w_10, true_scores_w_10, sim_scores_w_15, true_scores_w_15, sim_scores_w_20, true_scores_w_20 = sim_model(
                             seq1, seq2, count, index_1, index_2, masks=masks)
                         # 转换为排名序列
-                        rank_true_scores_w_10 = utils.rankdata(true_scores_w_10)
-                        rank_sim_scores_w_10 = utils.rankdata(sim_scores_w_10)
-                        rank_true_scores_w_5 = utils.rankdata(true_scores_w_5)
-                        rank_sim_scores_w_5 = utils.rankdata(sim_scores_w_5)
-                        rank_true_scores_w_15 = utils.rankdata(true_scores_w_15)
-                        rank_sim_scores_w_15 = utils.rankdata(sim_scores_w_15)
-                        rank_true_scores_w_20 = utils.rankdata(true_scores_w_20)
-                        rank_sim_scores_w_20 = utils.rankdata(sim_scores_w_20)
+                        rank_true_scores_w_10 = utils_SEA.rankdata(true_scores_w_10)
+                        rank_sim_scores_w_10 = utils_SEA.rankdata(sim_scores_w_10)
+                        rank_true_scores_w_5 = utils_SEA.rankdata(true_scores_w_5)
+                        rank_sim_scores_w_5 = utils_SEA.rankdata(sim_scores_w_5)
+                        rank_true_scores_w_15 = utils_SEA.rankdata(true_scores_w_15)
+                        rank_sim_scores_w_15 = utils_SEA.rankdata(sim_scores_w_15)
+                        rank_true_scores_w_20 = utils_SEA.rankdata(true_scores_w_20)
+                        rank_sim_scores_w_20 = utils_SEA.rankdata(sim_scores_w_20)
                         # 计算 Kendall's Tau
-                        tau_w_10 = utils.kendall_tau(rank_true_scores_w_10, rank_sim_scores_w_10)
-                        tau_w_5 = utils.kendall_tau(rank_true_scores_w_5, rank_sim_scores_w_5)
-                        tau_w_15 = utils.kendall_tau(rank_true_scores_w_15, rank_sim_scores_w_15)
-                        tau_w_20 = utils.kendall_tau(rank_true_scores_w_20, rank_sim_scores_w_20)
+                        tau_w_10 = utils_SEA.kendall_tau(rank_true_scores_w_10, rank_sim_scores_w_10)
+                        tau_w_5 = utils_SEA.kendall_tau(rank_true_scores_w_5, rank_sim_scores_w_5)
+                        tau_w_15 = utils_SEA.kendall_tau(rank_true_scores_w_15, rank_sim_scores_w_15)
+                        tau_w_20 = utils_SEA.kendall_tau(rank_true_scores_w_20, rank_sim_scores_w_20)
                         # 记录指标
                         part_w_10.append(tau_w_10)
                         part_w_5.append(tau_w_5)

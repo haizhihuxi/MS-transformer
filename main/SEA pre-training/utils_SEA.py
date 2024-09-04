@@ -20,19 +20,13 @@ References:
 """
 import numpy as np
 import os
-import math
 import logging
 import random
 import datetime
 import socket
-
-
 import torch
-import torch.nn as nn
-from torch.nn import functional as F
+
 torch.pi = torch.acos(torch.zeros(1)).item()*2
-
-
 
 def set_seed(seed):
     random.seed(seed)

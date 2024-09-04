@@ -10,7 +10,7 @@ from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-reset = False
+reset = True
 
 # Load the provided data files
 test_data_path = '../data/test_filter.pkl'

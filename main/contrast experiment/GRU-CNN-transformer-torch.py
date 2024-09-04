@@ -187,7 +187,7 @@ def calculate_haversine_distance(y_true, y_pred):
 
 
 # 数据加载
-reset = False
+reset = True
 for i in range(0, 18):
     cluster = i
     test_data_path = f'clusters/test/cluster_{cluster}_data.pkl'
