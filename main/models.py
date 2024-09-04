@@ -1,34 +1,10 @@
-# coding=utf-8
-# Copyright 2021, Duong Nguyen
-#
-# Licensed under the CECILL-C License;
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#   http://www.cecill.info
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Models for TrAISformer.
-    https://arxiv.org/abs/210                                                                                                                                                                               9.03958
-
-The code is built upon:
-    https://github.com/karpathy/minGPT
-"""
-
-import math
 import logging
 import random
-
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from config_trAISformer import Config
+from config import Config
 import Frech_distance
 import math
 import matplotlib.pyplot as plt
@@ -40,15 +16,10 @@ random.seed(42)
 torch.manual_seed(42)
 
 class CausalSelfAttention(nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
-    """
 
     def __init__(self, config):
         super().__init__()
-        assert config.n_embd % config.n_head == 0  # 检查 config.n_embd（表示输入嵌入维度的配置参数）是否能够被 config.n_head（表示头数）整除。这是因为在多头自注意力中，每个头的维度都应该相同。
+        assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads
         self.key = nn.Linear(config.n_embd, config.n_embd)
         self.query = nn.Linear(config.n_embd, config.n_embd)  # 线性层768*768
@@ -61,7 +32,6 @@ class CausalSelfAttention(nn.Module):
         # causal mask因果掩码 只关注输入序列中前面的单词对后面的单词的影响，而不允许后面的单词影响前面的单词
         self.register_buffer("mask", torch.tril(torch.ones(config.max_seqlen, config.max_seqlen))
                              .view(1, 1, config.max_seqlen, config.max_seqlen))
-        # 120*120上三角矩阵改为1 x 1 x config.max_seqlen x config.max_seqlen来将批次大小设置为1。 创建一个叫做“mask”的buffer
         self.n_head = config.n_head  # 头的数目8
 
         # Create an input mask that ignores the last 520 columns of the embedding during evaluation
@@ -89,28 +59,23 @@ class CausalSelfAttention(nn.Module):
         att = F.softmax(att, dim=-1)  # softmax(32,8,120,120)
         # att = self.ema(att)  # 对张量应用CANet模块
         att = self.attn_drop(att)  # dropout 非0参数除以0.9，放大
-        y = att @ v  # (B32, nh8, T120, T120) x (B32, nh8, T120, hs96) -> (B32, nh8, T120, hs96) #*V
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-        # (32,8,120,96)->(32,120,8,96)->无内存碎片，确保连续->(32,120,768)
+        y = att @ v  # (B32, nh8, T120, T120) x (B32, nh8, T120, hs96) -> (B32, nh8, T120, hs96)
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        # (32,8,120,96)->(32,120,8,96)->(32,120,768)
         # output projection
         y = self.resid_drop(self.proj(y))  # 先通过线形层再drop
         return y
 
 class CausalSelfAttention_sim_weight(nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
-    """
 
     def __init__(self, config, embedding, attention, fc_judge, fc_info, out_judge, out_info):
         super().__init__()
-        assert config.n_embd % config.n_head == 0  # 检查 config.n_embd（表示输入嵌入维度的配置参数）是否能够被 config.n_head（表示头数）整除。这是因为在多头自注意力中，每个头的维度都应该相同。
+        assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads
         self.key = nn.Linear(config.n_embd, config.n_embd)
-        self.query = nn.Linear(config.n_embd, config.n_embd)  # 线性层768*768
+        self.query = nn.Linear(config.n_embd, config.n_embd)
         self.value = nn.Linear(config.n_embd, config.n_embd)
-        self.weights_layer = nn.Linear(config.max_seqlen, config.max_seqlen, bias=False)  # 添加用于学习权重的全连接层
+        self.weights_layer = nn.Linear(config.max_seqlen, config.max_seqlen, bias=False)
         # regularization
         self.attn_drop = nn.Dropout(config.attn_pdrop)
         self.resid_drop = nn.Dropout(config.resid_pdrop)  # dropout 神经元
@@ -119,11 +84,9 @@ class CausalSelfAttention_sim_weight(nn.Module):
         self.weight_concat = nn.Linear(config.max_seqlen, config.max_seqlen)
         # torch.nn.init.kaiming_normal_(self.weight_concat.weight, mode='fan_in', nonlinearity='relu')
 
-        # causal mask因果掩码 只关注输入序列中前面的单词对后面的单词的影响，而不允许后面的单词影响前面的单词
         self.register_buffer("mask", torch.tril(torch.ones(config.max_seqlen, config.max_seqlen))
                              .view(1, 1, config.max_seqlen, config.max_seqlen))
-        # 120*120上三角矩阵改为1 x 1 x config.max_seqlen x config.max_seqlen来将批次大小设置为1。 创建一个叫做“mask”的buffer
-        self.n_head = config.n_head  # 头的数目8
+        self.n_head = config.n_head
         self.compary_threshold = config.traj_compary_threshold
         self.register_buffer("input_mask",
                              torch.cat([torch.ones(config.n_embd - config.n_auxil), torch.zeros(config.n_auxil)]))
@@ -143,7 +106,7 @@ class CausalSelfAttention_sim_weight(nn.Module):
         self.window_size_info = config.window_size_info
 
         self.mlp = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),  # 将输入数据的维度扩大四倍 进一步提取特征加速训练
+            nn.Linear(config.n_embd, 4 * config.n_embd),
             nn.GELU(),  # Gaussian Error Linear Unit
             nn.Linear(4 * config.n_embd, config.n_embd),
             nn.Dropout(config.resid_pdrop),
@@ -381,11 +344,6 @@ class CausalSelfAttention_sim_weight(nn.Module):
                                         1 - Config.weight_10) + \
                                                                     rate_of_change_judge[i] * Config.weight_10
 
-                        #     # 绘制比较的轨迹并保存图片
-                        #     self.plot_trajectories(traj_1, traj_2, sim_scores_judge, config_trAISformer.Config.savedir,count, index_1)
-                        # print(f"weighted_sum:{weighted_sum[0]}")
-                        # print(f"count:{count[0]}")
-                        # print()
                         count[index_1] += 1
             weighted_sum = weighted_sum / count
             # 将 NaN 替换为 0
@@ -478,33 +436,24 @@ class similarity_Attention(nn.Module):
 
 
 class CausalSelfAttention_adaptive_weight(nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
-    """
 
     def __init__(self, config):
         super().__init__()
-        assert config.n_embd % config.n_head == 0  # 检查 config.n_embd（表示输入嵌入维度的配置参数）是否能够被 config.n_head（表示头数）整除。这是因为在多头自注意力中，每个头的维度都应该相同。
+        assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads
         self.key = nn.Linear(config.n_embd, config.n_embd)
-        self.query = nn.Linear(config.n_embd, config.n_embd)  # 线性层768*768
+        self.query = nn.Linear(config.n_embd, config.n_embd)
         self.value = nn.Linear(config.n_embd, config.n_embd)
-        self.weights_layer = nn.Linear(config.max_seqlen, config.max_seqlen, bias=False)  # 添加用于学习权重的全连接层
+        self.weights_layer = nn.Linear(config.max_seqlen, config.max_seqlen, bias=False)
         # regularization
         self.attn_drop = nn.Dropout(config.attn_pdrop)
-        self.resid_drop = nn.Dropout(config.resid_pdrop)  # dropout 神经元
+        self.resid_drop = nn.Dropout(config.resid_pdrop)
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.weight_concat = nn.Linear(config.max_seqlen, config.max_seqlen)
-        # torch.nn.init.kaiming_normal_(self.weight_concat.weight, mode='fan_in', nonlinearity='relu')
-
-        # causal mask因果掩码 只关注输入序列中前面的单词对后面的单词的影响，而不允许后面的单词影响前面的单词
         self.register_buffer("mask", torch.tril(torch.ones(config.max_seqlen, config.max_seqlen))
                              .view(1, 1, config.max_seqlen, config.max_seqlen))
-        # 120*120上三角矩阵改为1 x 1 x config.max_seqlen x config.max_seqlen来将批次大小设置为1。 创建一个叫做“mask”的buffer
-        self.n_head = config.n_head  # 头的数目8
+        self.n_head = config.n_head
         self.compary_threshold = config.traj_compary_threshold
         self.register_buffer("input_mask",
                              torch.cat([torch.ones(config.n_embd - config.n_auxil), torch.zeros(config.n_auxil)]))
@@ -516,9 +465,6 @@ class CausalSelfAttention_adaptive_weight(nn.Module):
     def forward(self, x, real_x, all_data, state):
         torch.cuda.empty_cache()
         B, T, C = x.size()  # 32 120 768
-        # B批量大小（batch size），T序列长度（sequence length），self.n_head注意力头的数量，C // self.n_head每个头所处理的特征数量
-        # k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B32, nh8, T120, hs96)
-        # q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         q = self.value(x)
         k = self.value(x)
         v = self.value(x)
@@ -570,7 +516,6 @@ class CausalSelfAttention_adaptive_weight(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         # 计算点积
         att = q @ k.transpose(-2, -1)
         all_ones = (weight_ori_line == 1).all().item()
@@ -578,35 +523,25 @@ class CausalSelfAttention_adaptive_weight(nn.Module):
             weight_ori_line = torch.ones_like(att)
         att = att * weight_ori_line
 
-        # 计算缩放因子，即特征维度的平方根的倒数
         scale_factor = 1.0 / math.sqrt(k.size(-1))
-        # 应用缩放因子
-        att = att * scale_factor  # q(32,8,120,96)与k转置(32,8,96,120)矩阵乘法得(32,8,120,120)
+        att = att * scale_factor
 
         att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))  # mask无关位置,mask中为0的位置用浮点数‘-inf’填充
         att = F.softmax(att, dim=-1)  # softmax(32,8,120,120)
         att = self.attn_drop(att)  # dropout 非0参数除以0.9，放大
         att = att.float()
-        # v = v.float()
-        y = att @ v  # (B32, nh8, T120, T120) x (B32, nh8, T120, hs96) -> (B32, nh8, T120, hs96) #*V
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-        # (32,8,120,96)->(32,120,8,96)->无内存碎片，确保连续->(32,120,768)
-        # output projection
-        y = self.resid_drop(self.proj(y))  # 先通过线形层再drop
+        y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.resid_drop(self.proj(y))
         return y
 
 
 
 class CausalSelfAttention_newsim_weight(nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
-    """
 
     def __init__(self, config):
         super().__init__()
-        assert config.n_embd % config.n_head == 0  # 检查 config.n_embd（表示输入嵌入维度的配置参数）是否能够被 config.n_head（表示头数）整除。这是因为在多头自注意力中，每个头的维度都应该相同。
+        assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads
         self.key = nn.Linear(config.n_embd, config.n_embd)
         self.query = nn.Linear(config.n_embd, config.n_embd)  # 线性层768*768
@@ -618,10 +553,8 @@ class CausalSelfAttention_newsim_weight(nn.Module):
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.weight_concat = nn.Linear(config.max_seqlen, config.max_seqlen)
-        # causal mask因果掩码 只关注输入序列中前面的单词对后面的单词的影响，而不允许后面的单词影响前面的单词
         self.register_buffer("mask", torch.tril(torch.ones(config.max_seqlen, config.max_seqlen))
                              .view(1, 1, config.max_seqlen, config.max_seqlen))
-        # 120*120上三角矩阵改为1 x 1 x config.max_seqlen x config.max_seqlen来将批次大小设置为1。 创建一个叫做“mask”的buffer
         self.n_head = config.n_head  # 头的数目8
         self.compary_threshold = config.traj_compary_threshold
         self.register_buffer("input_mask",
@@ -631,7 +564,7 @@ class CausalSelfAttention_newsim_weight(nn.Module):
         self.device = "cuda:0"
 
         self.mlp = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),  # 将输入数据的维度扩大四倍 进一步提取特征加速训练
+            nn.Linear(config.n_embd, 4 * config.n_embd),
             nn.GELU(),  # Gaussian Error Linear Unit
             nn.Linear(4 * config.n_embd, config.n_embd),
             nn.Dropout(config.resid_pdrop),
@@ -654,7 +587,7 @@ class CausalSelfAttention_newsim_weight(nn.Module):
         if state:
             # current_torch_seed = torch.initial_seed()
             # print(f"Current PyTorch seed: {current_torch_seed}")
-            if random.random() > 0.6:
+            if random.random() > 0.2:
                 weights_row = weight[:, :, 0].unsqueeze(2)
                 weight_line = weight[:, :, 0].unsqueeze(1).unsqueeze(2)
             else:
@@ -872,8 +805,6 @@ class adaptiveModel(nn.Module):
         # for _ in range(0, 8):
         #     layers.append(Block(config))
 
-
-
         # 使用列表创建 CustomSequential
         self.blocks = CustomSequential(*layers)
 
@@ -884,7 +815,7 @@ class adaptiveModel(nn.Module):
 class TrAISformer(nn.Module):
     """Transformer for AIS trajectories."""
 
-    def __init__(self, config, partition_model=None):
+    def __init__(self, config):
         super().__init__()
 
         self.lat_size = config.lat_size
@@ -910,11 +841,6 @@ class TrAISformer(nn.Module):
             [config.n_lat_embd, config.n_lon_embd, config.n_sog_embd, config.n_cog_embd, config.n_lat_target_embd,
              config.n_lon_target_embd]))
 
-        if hasattr(config, "partition_mode"):  # 数据分区的模型
-            self.partition_mode = config.partition_mode
-        else:
-            self.partition_mode = "uniform"
-        self.partition_model = partition_model
 
         if hasattr(config, "lat_min"):  # the ROI is provided.
             self.lat_min = config.lat_min
@@ -925,39 +851,28 @@ class TrAISformer(nn.Module):
             self.lon_range = config.lon_max - config.lon_min
             self.sog_range = 30.
 
-        if hasattr(config, "mode"):  # mode: "pos" or "velo".
-            # "pos": predict directly the next positions.
-            # "velo": predict the velocities, use them to
-            # calculate the next positions.
-            self.mode = config.mode
-        else:
-            self.mode = "pos"
+        self.mode = "pos"
 
         # Passing from the 4-D space to a high-dimentional space
-        self.lat_emb = nn.Embedding(self.lat_size, config.n_lat_embd)  # 元素的数量250  每个元素在嵌入层中的表示的维度256
-        self.lon_emb = nn.Embedding(self.lon_size, config.n_lon_embd)  # 270 256
+        self.lat_emb = nn.Embedding(self.lat_size, config.n_lat_embd)
+        self.lon_emb = nn.Embedding(self.lon_size, config.n_lon_embd)
         self.lat_target_emb = nn.Embedding(self.lat_target_size, config.n_lat_target_embd)
         self.lon_target_emb = nn.Embedding(self.lon_target_size, config.n_lon_target_embd)
-        self.sog_emb = nn.Embedding(self.sog_size, config.n_sog_embd)  # 30 128
-        self.cog_emb = nn.Embedding(self.cog_size, config.n_cog_embd)  # 72 128
+        self.sog_emb = nn.Embedding(self.sog_size, config.n_sog_embd)
+        self.cog_emb = nn.Embedding(self.cog_size, config.n_cog_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, config.max_seqlen, config.n_embd))
-        self.drop = nn.Dropout(config.embd_pdrop)  # 0.1
+        self.drop = nn.Dropout(config.embd_pdrop)
 
         # decoder head
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.ln_auxil = nn.LayerNorm(config.n_auxil)
-        if self.mode in ("mlp_pos", "mlp"):
-            self.head = nn.Linear(config.n_embd, config.n_embd, bias=False)
-            self.head_auxil = nn.Linear(config.n_auxil, config.n_auxil, bias=False)
-        else:
-            # 将概率转化为离散经纬度的
-            self.head = nn.Linear(config.n_embd, self.full_size, bias=False)  # Classification head
-            self.head_auxil = nn.Linear(config.n_auxil, self.full_des_size, bias=False)
+        self.head = nn.Linear(config.n_embd, self.full_size, bias=False)  # Classification head
+        self.head_auxil = nn.Linear(config.n_auxil, self.full_des_size, bias=False)
         self.max_seqlen = config.max_seqlen
         self.blocks = adaptiveModel(config)
         self.mlp = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),  # 将输入数据的维度扩大四倍 进一步提取特征加速训练
-            nn.GELU(),  # Gaussian Error Linear Unit
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
             nn.Linear(4 * config.n_embd, config.n_embd),
             nn.Dropout(config.resid_pdrop),
         )
@@ -979,11 +894,9 @@ class TrAISformer(nn.Module):
         for name, param in model.named_parameters():
             print(name)
 
-    # 初始化模型权重
-    # 对于线性层和嵌入层，使用正态分布来初始化权重，对于归一化层，将偏置项初始化为 0，并将权重初始化为 1
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)  # 均值：0  标准差：0.02
+            module.weight.data.normal_(mean=0.0, std=0.02)
             if isinstance(module, nn.Linear) and module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.LayerNorm):
@@ -991,46 +904,29 @@ class TrAISformer(nn.Module):
             module.weight.data.fill_(1.0)
 
     def configure_optimizers(self, train_config):
-        """
-        区分权重衰减参数和不会权重衰减的参数
-        该函数将模型的所有参数分为两类：需要进行权重衰减的参数和不需要进行权重衰减的参数
-        （例如偏置项和归一化/嵌入层的权重），然后返回一个PyTorch优化器对象。
-        """
-        # 初始化集合以保存参数名称
+
         weight_decay_params = set()
         no_weight_decay_params = set()
 
-        # 定义需要和不需要权重衰减的模块类型
         decay_modules = (torch.nn.Linear, torch.nn.Conv1d, torch.nn.AdaptiveAvgPool2d, torch.nn.Conv2d)
         no_decay_modules = (torch.nn.LayerNorm, torch.nn.Embedding, torch.nn.GroupNorm)
 
-        # 遍历所有命名模块及其参数
         for module_name, module in self.named_modules():
             for param_name, param in module.named_parameters():
                 full_param_name = f'{module_name}.{param_name}' if module_name else param_name  # 生成完整的参数名称
 
                 if param_name.endswith('bias'):
-                    # 所有偏置项不进行权重衰减
                     no_weight_decay_params.add(full_param_name)
                 elif param_name.endswith('weight') and isinstance(module, decay_modules):
-                    # 白名单模块的权重进行权重衰减
                     weight_decay_params.add(full_param_name)
                 elif param_name.endswith('weight') and isinstance(module, no_decay_modules):
-                    # 黑名单模块的权重不进行权重衰减
                     no_weight_decay_params.add(full_param_name)
 
-        # 特殊处理位置嵌入参数
         no_weight_decay_params.add('pos_emb')
 
-        # 验证所有参数都被考虑到了
         param_dict = {param_name: param for param_name, param in self.named_parameters() if param.requires_grad}
         intersect_params = weight_decay_params & no_weight_decay_params  # 取交集
         all_params = weight_decay_params | no_weight_decay_params  # 取并集
-
-        # # 输出调试信息
-        # print("参数字典中的键：", param_dict.keys())
-        # print("不进行权重衰减的参数：", no_weight_decay_params)
-        # print("权重衰减的参数：", weight_decay_params)
 
         assert len(intersect_params) == 0, "参数 %s 同时出现在了 decay 和 no_decay 集合中!" % (str(intersect_params),)
         assert len(param_dict.keys() - all_params) == 0, \
@@ -1107,9 +1003,8 @@ class TrAISformer(nn.Module):
                                      dim=-1)  # 4-hot 在最后一个维度拼接
         position_embeddings = self.pos_emb[:, :seqlen, :]
         fea = self.drop(token_embeddings + position_embeddings)
-        # 初始化一个空的张量
         batch_size = x.shape[0]
-        third_dim = 512  # 自定义的第三维度大小
+        third_dim = 512
 
         # 创建新的张量
         des = torch.zeros(batch_size, 1, third_dim, device=x.device, dtype=x.dtype)

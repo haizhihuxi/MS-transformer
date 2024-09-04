@@ -33,18 +33,17 @@ from torch.nn import functional as F
 torch.pi = torch.acos(torch.zeros(1)).item()*2
 
 
-#初始化随机数种子
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)#为CPU中设置种子，生成随机数
-    torch.cuda.manual_seed_all(seed)#为特定GPU设置种子，生成随机数
-    torch.backends.cudnn.deterministic = True#每次返回卷积算法是确定的，即默认算法
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True#
 
     
 def new_log(logdir,filename):
-    """定义日志格式
-    """
+
     filename = os.path.join(logdir,
                             datetime.datetime.now().strftime("log_%Y-%m-%d-%H-%M-%S_"+socket.gethostname()+"_"+filename+".log"))
     logging.basicConfig(level=logging.INFO,
@@ -71,7 +70,7 @@ def haversine(input_coords,
     """
     R = 6371
     lat_errors = pred_coords[...,0] - input_coords[...,0]
-    lon_errors = pred_coords[...,1] - input_coords[...,1]#预测坐标减去输入坐标
+    lon_errors = pred_coords[...,1] - input_coords[...,1]
     a = torch.sin(lat_errors/2)**2\
         +torch.cos(input_coords[:,:,0])*torch.cos(pred_coords[:,:,0])*torch.sin(lon_errors/2)**2
     c = 2*torch.atan2(torch.sqrt(a),torch.sqrt(1-a))
