@@ -26,6 +26,7 @@ class Config():
     window_size_10 = 10
     window_size_15 = 15
     window_size_5 = 5
+    tau_A = [0.6526, 0.7376, 0.7847, 0.8222]
 
 
     # ===========================================================================
@@ -35,11 +36,10 @@ class Config():
     top_k = 10  # int or None
     r_vicinity = 40  # int
     frechet_judge = False
-    dtw_judge = False
-    erp_judge = False
+    dtw_judge = True
+    erp_judge = True
     cos_judge = False
-    hausdorff_judge = True
-
+    hausdorff_judge = False
     show_parameter = False
 
     # Data flags
@@ -73,11 +73,11 @@ class Config():
     final_tokens = 260e9  # (at what point we reach 10% of original LR)
     num_workers = 6  # for DataLoader
 
-    filename = f"hausdorff_judge" \
-               + f"-window_size-{window_size_5}"\
-               + f"-window_size-{window_size_10}"\
-               + f"-window_size-{window_size_15}"\
-               + f"-window_size-{window_size_20}"
+    filename = f"" \
+               + f"-window_size-{window_size_5}-erp"\
+               + f"-window_size-{window_size_10}-erp"\
+               + f"-window_size-{window_size_15}-erp"\
+               + f"-window_size-{window_size_20}-dtw"
     savedir = "./re-results/" + filename + "/"
     savedir_test = "./results/" + filename + "/"
     sim_outfile = 'evaluation_results.txt'
